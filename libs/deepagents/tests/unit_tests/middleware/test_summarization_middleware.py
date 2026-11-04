@@ -18,6 +18,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from deepagents.backends.composite import CompositeBackend
 from deepagents.backends.protocol import BackendProtocol, EditResult, FileDownloadResponse, FileUploadResponse, ReadResult, WriteResult
 from deepagents.middleware.summarization import (
+    LAST_CALL_MODEL_KEY,
     SummarizationEvent,
     SummarizationMiddleware,
     _token_counter_accepts_tools,
@@ -30,6 +31,13 @@ if TYPE_CHECKING:
 # -----------------------------------------------------------------------------
 # Fixtures and helpers
 # -----------------------------------------------------------------------------
+
+
+def _without_record(result: object) -> object:
+    """Unwrap a result whose only state update is the model record."""
+    if isinstance(result, ExtendedModelResponse) and set(result.command.update) == {LAST_CALL_MODEL_KEY}:
+        return result.model_response
+    return result
 
 
 def make_conversation_messages(
@@ -1326,7 +1334,7 @@ class TestNoSummarizationTriggered:
         result, _ = call_wrap_model_call(middleware, state, runtime)
 
         # Should return ModelResponse (no summarization)
-        assert not isinstance(result, ExtendedModelResponse)
+        assert not isinstance(_without_record(result), ExtendedModelResponse)
 
         # No writes should have occurred
         assert len(backend.write_calls) == 0
@@ -1476,7 +1484,7 @@ async def test_async_system_message_counts_for_truncate_trigger() -> None:
 
     result = await middleware.awrap_model_call(request, handler)
 
-    assert not isinstance(result, ExtendedModelResponse)
+    assert not isinstance(_without_record(result), ExtendedModelResponse)
     assert captured_request is not None
     truncated_call = captured_request.messages[0].tool_calls[0]
     assert truncated_call["args"]["content"] == "x" * 20 + "...(argument truncated)"
@@ -1913,7 +1921,7 @@ class TestCutoffIndexEdgeCases:
         result, _ = call_wrap_model_call(middleware, state, runtime)
 
         # Should return ModelResponse (no summarization) because cutoff_index would be 0 or negative
-        assert not isinstance(result, ExtendedModelResponse)
+        assert not isinstance(_without_record(result), ExtendedModelResponse)
         # No writes should occur
         assert len(backend.write_calls) == 0
 
@@ -1937,7 +1945,7 @@ class TestCutoffIndexEdgeCases:
         result, _ = await call_awrap_model_call(middleware, state, runtime)
 
         # Should return ModelResponse (no summarization)
-        assert not isinstance(result, ExtendedModelResponse)
+        assert not isinstance(_without_record(result), ExtendedModelResponse)
         # No writes should have occurred
         assert len(backend.write_calls) == 0
 
@@ -1967,7 +1975,7 @@ class TestCutoffIndexEdgeCases:
         result, _ = await call_awrap_model_call(middleware, state, runtime)
 
         # Should return ModelResponse (no summarization) because cutoff_index would be 0 or negative
-        assert not isinstance(result, ExtendedModelResponse)
+        assert not isinstance(_without_record(result), ExtendedModelResponse)
         # No writes should occur
         assert len(backend.write_calls) == 0
 
@@ -2013,7 +2021,7 @@ def test_no_truncation_when_trigger_is_none() -> None:
     result, _ = call_wrap_model_call(middleware, state, runtime)
 
     # Should return ModelResponse (no truncation, no summarization)
-    assert not isinstance(result, ExtendedModelResponse)
+    assert not isinstance(_without_record(result), ExtendedModelResponse)
 
 
 def test_truncate_old_write_file_tool_call() -> None:
@@ -2060,7 +2068,7 @@ def test_truncate_old_write_file_tool_call() -> None:
     result, modified_request = call_wrap_model_call(middleware, state, runtime)
 
     # Truncation only - returns AIMessage (ModelResponse)
-    assert isinstance(result, AIMessage)
+    assert isinstance(_without_record(result), AIMessage)
     assert modified_request is not None
     # Truncation modifies messages inline
     cleaned_messages = modified_request.messages
@@ -2122,7 +2130,7 @@ def test_truncate_old_edit_file_tool_call() -> None:
     result, modified_request = call_wrap_model_call(middleware, state, runtime)
 
     # Truncation only - returns AIMessage (ModelResponse)
-    assert isinstance(result, AIMessage)
+    assert isinstance(_without_record(result), AIMessage)
     assert modified_request is not None
     # Truncation modifies messages inline
     cleaned_messages = modified_request.messages
@@ -2176,7 +2184,7 @@ def test_truncate_ignores_other_tool_calls() -> None:
     result, modified_request = call_wrap_model_call(middleware, state, runtime)
 
     # Should return AIMessage since read_file is not cleaned (no truncation)
-    assert isinstance(result, AIMessage)
+    assert isinstance(_without_record(result), AIMessage)
     assert modified_request is not None
 
     # Verify read_file args are unchanged
@@ -2229,7 +2237,7 @@ def test_truncate_respects_recent_messages() -> None:
     result, modified_request = call_wrap_model_call(middleware, state, runtime)
 
     # No truncation should happen since the tool call is in the keep window (last 4 messages)
-    assert isinstance(result, AIMessage)
+    assert isinstance(_without_record(result), AIMessage)
     assert modified_request is not None
 
     # Verify the write_file content is unchanged
@@ -2286,7 +2294,7 @@ def test_truncate_with_token_keep_policy() -> None:
     result, modified_request = call_wrap_model_call(middleware, state, runtime)
 
     # Truncation only - returns AIMessage (ModelResponse)
-    assert isinstance(result, AIMessage)
+    assert isinstance(_without_record(result), AIMessage)
     assert modified_request is not None
     # Truncation modifies messages inline
     cleaned_messages = modified_request.messages
@@ -2345,7 +2353,7 @@ def test_truncate_with_fraction_trigger_and_keep() -> None:
     # Should keep only ~200 tokens (1 message) from the end
     # So first 2 messages should be in truncation zone
     # Truncation only - returns AIMessage (ModelResponse)
-    assert isinstance(result, AIMessage)
+    assert isinstance(_without_record(result), AIMessage)
     assert modified_request is not None
     # Truncation modifies messages inline
     cleaned_messages = modified_request.messages
@@ -2450,7 +2458,7 @@ def test_truncate_without_summarization() -> None:
     result, modified_request = call_wrap_model_call(middleware, state, runtime)
 
     # Truncation only - returns AIMessage (ModelResponse)
-    assert isinstance(result, AIMessage)
+    assert isinstance(_without_record(result), AIMessage)
     assert modified_request is not None
 
     # No backend write (no summarization)
@@ -2506,7 +2514,7 @@ def test_truncate_preserves_small_arguments() -> None:
     result, modified_request = call_wrap_model_call(middleware, state, runtime)
 
     # No modification should happen since content is small
-    assert isinstance(result, AIMessage)
+    assert isinstance(_without_record(result), AIMessage)
     assert modified_request is not None
 
     # Verify the content is unchanged
@@ -2570,7 +2578,7 @@ def test_truncate_mixed_tool_calls() -> None:
     result, modified_request = call_wrap_model_call(middleware, state, runtime)
 
     # Truncation only - returns AIMessage (ModelResponse)
-    assert isinstance(result, AIMessage)
+    assert isinstance(_without_record(result), AIMessage)
     assert modified_request is not None
     # Truncation modifies messages inline
     cleaned_messages = modified_request.messages
@@ -2635,7 +2643,7 @@ def test_truncate_custom_truncation_text() -> None:
     result, modified_request = call_wrap_model_call(middleware, state, runtime)
 
     # Truncation only - returns AIMessage (ModelResponse)
-    assert isinstance(result, AIMessage)
+    assert isinstance(_without_record(result), AIMessage)
     assert modified_request is not None
     # Truncation modifies messages inline
     cleaned_messages = modified_request.messages
@@ -2688,7 +2696,7 @@ async def test_truncate_async_works() -> None:
     result, modified_request = await call_awrap_model_call(middleware, state, runtime)
 
     # Truncation only - returns AIMessage (ModelResponse)
-    assert isinstance(result, AIMessage)
+    assert isinstance(_without_record(result), AIMessage)
     assert modified_request is not None
     # Truncation modifies messages inline
     cleaned_messages = modified_request.messages
@@ -3039,7 +3047,7 @@ def test_profile_inference_triggers_summary() -> None:
     result, _ = call_wrap_model_call(middleware, state, runtime)
 
     # Should not trigger summarization
-    assert not isinstance(result, ExtendedModelResponse)
+    assert not isinstance(_without_record(result), ExtendedModelResponse)
     assert len(backend.write_calls) == 0
 
     # Test 2: Engage summarization when at threshold
@@ -3108,7 +3116,7 @@ def test_profile_inference_triggers_summary() -> None:
     result, _ = call_wrap_model_call(middleware, state, runtime)
 
     # Should not trigger summarization since we'd keep everything anyway
-    assert not isinstance(result, ExtendedModelResponse)
+    assert not isinstance(_without_record(result), ExtendedModelResponse)
     assert len(backend.write_calls) == 0
 
 
@@ -3207,9 +3215,10 @@ async def test_async_offload_and_summary_run_concurrently() -> None:
 
     async def slow_summary(
         msgs: Any,  # noqa: ANN401
+        context: Any = None,  # noqa: ANN401
     ) -> str:
         await asyncio.sleep(delay)
-        return await original_summary(msgs)
+        return await original_summary(msgs, context)
 
     middleware._aoffload_to_backend = slow_offload  # type: ignore[assignment]
     middleware._acreate_summary = slow_summary  # type: ignore[assignment]
@@ -3480,7 +3489,7 @@ class TestTokenCounterToolsProbe:
 
         result = middleware.wrap_model_call(self._make_request_with_tools(), handler)
 
-        assert isinstance(result, AIMessage)
+        assert isinstance(_without_record(result), AIMessage)
         assert captured is not None  # Handler ran; counting without tools did not raise.
 
     def test_uninspectable_counter_probes_with_tools(self) -> None:
